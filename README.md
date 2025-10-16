@@ -2,35 +2,94 @@
 
 <p align="center">
     <a alt="total downloads">
-        <img src="https://img.shields.io/github/downloads/ToniMacaroni/RedManager/total" /></a>
-    <a href="https://github.com/ToniMacaroni/SaberFactory/releases" alt="latest version">
+        <img src="https://img.shields.io/github/downloads/Za-Pa-Al/RedManager/total" /></a>
+    <a href="https://github.com/Za-Pa-Al/SaberFactory/releases" alt="latest version">
         <img src="https://img.shields.io/github/v/tag/ToniMacaroni/RedManager?label=version" /></a>
 </p>
 
 ---
 
-The RedManager is a general tool for installing/uninstalling/updating different features
-of the [RedLoader](https://github.com/ToniMacaroni/RedLoader) ecosystem as well as general Sons of the Forest modding features.
+The RedManager is a general tool for installing/uninstalling/updating different features of the [RedLoader](https://github.com/ToniMacaroni/RedLoader) ecosystem as well as general Sons of the Forest modding features.
 
-**:arrow_forward:[DOWNLOAD FROM HERE](https://github.com/ToniMacaroni/RedManager/releases):arrow_backward:**  
-*This will take you to the releases page*
+**:arrow_forward:[Original RedManager from ToniMacaroni](https://github.com/ToniMacaroni/RedManager):arrow_backward:**  
+# Installation
+Download and execute RedModManager.exe. There are likely problems (crashing) if you execute it in the folder of file SonsOfTheForest.exe and folder _Redloader. Place it somewhere else. Might require .NET 6 Installation in that case.
 
----
+# Summary of Changes
 
-## Getting Started
+## Overview
 
-You are probably here to install the RedLoader. To do that:
-1) Start the RedManager.
-2) The manager should automatically detect your path. If not, you can set it manually.
-3) Click on the "Install RedLoader" button.
+Enhancements to the RedModManager Tauri/Svelte application.
 
-If you want to double check the installation, check if the following files exist in your game directory:
-- `_RedLoader` folder
-- `dobby.dll` file
-- `version.dll` file
+**User-Facing Improvements**
 
-## Additional Features
-Beyond the above mentioned features, the RedManager can also:
-- Clear any data from old loaders.
-- *For modders*: Install the extended UnityExplorer.
-- *For modders*: Setup the mod template and quickly create new projects.
+- **Visual Status System**: Immediate mod status recognition through color coding
+- **Responsive Layout**: Optimal card display across all window sizes
+- **Fast Image Loading**: Cached thumbnails with optimization
+- **Window Memory**: Application remembers user's preferred size/position
+
+## Technical
+
+**Key Changes by Category**
+
+**🏗️ Backend Infrastructure (Rust/Tauri)**
+
+**Files Modified:**
+
+- [Cargo.toml](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Added window state persistence plugin
+- [main.rs](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Major expansion with image caching system
+- [tauri.conf.json](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Window configuration and security updates
+
+**Major Features Added:**
+
+- **Window State Persistence**: Integrated [tauri-plugin-window-state v0.1](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) for remembering user window size/position
+- **Advanced Image Caching System**: Comprehensive image optimization and caching with:
+  - Smart server change detection (ETag/Last-Modified headers)
+  - Automatic image optimization (WebP conversion, thumbnail generation)
+  - 24-hour cache expiration with graceful fallbacks
+  - Memory and disk cache management
+- **Updated Window Configuration**: 1400x900 default size, 600px minimum width
+
+**🎨 Frontend UI/UX Enhancements (Svelte)**
+
+**Files Modified:**
+
+- [ModCard.svelte](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Complete redesign with conditional styling
+- [StatusButton.svelte](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Color-coded button system
+- [Mods.svelte](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Grid layout optimization and search improvements
+- [App.svelte](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - TypeScript improvements
+
+**Major Features Added:**
+
+- **Responsive Grid System**: Auto-fit layout with 420px minimum columns, preventing card overlap
+- **Color-Coded Status Indicators**:
+  - Install/Update buttons: Blue background (#0f1e2e)
+  - Uninstall buttons: Red background (#2d0a0a)
+  - Card backgrounds: Green for enabled mods, red for disabled
+- **Optimized Image Display**: 220x120px forced dimensions with proper container overflow handling
+- **Enhanced Search Interface**: Aligned with grid padding, improved button groups
+
+**📦 Development Infrastructure**
+
+**Files Added:**
+
+- [launch.json](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Tauri development configuration
+- [tasks.json](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Build and cleanup tasks
+- [cleanup.bat](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) & [cleanup.ps1](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Process cleanup scripts
+- [imageCache.ts](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Frontend image cache management
+- [CacheDebugPanel.svelte](vscode-file://vscode-app/c:/Users/Alex/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) - Development debugging tools
+
+**Features Added:**
+
+- **Automated Development Workflow**: VS Code tasks for building, running, and cleanup
+- **Process Management**: Smart cleanup scripts for development server conflicts
+- **Debug Tools**: Cache debugging panel with memory usage statistics
+
+**🔧 Performance & Stability**
+
+**Key Improvements:**
+
+- **Grid Position Stability**: Unique keys (mod.mod_id) prevent position shifting during operations
+- **Optimized Refresh Logic**: Proper mod status synchronization with initModList() calls
+- **Memory Management**: Intelligent image caching with size limits and automatic cleanup
+- **Network Optimization**: Progressive image loading and preloading for better UX
