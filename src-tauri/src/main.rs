@@ -9,15 +9,17 @@ use std::io::{BufReader, BufRead};
 use winreg::{RegKey, enums::*};
 use regex::Regex;
 
-use std::ffi::OsStr;
-use std::iter::once;
-use std::os::windows::ffi::OsStrExt;
-
-use std::{env, error::Error, path::Path, path::PathBuf, ptr::null_mut, slice};
+use std::{env, error::Error, path::Path, path::PathBuf, ptr::null_mut};
 use windows::{
     core,
     Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO},
 };
+
+use tokio::io::AsyncWriteExt;
+use futures_util::StreamExt;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use image::ImageFormat;
 
 const SOTF_APP_ID: &str = "1326470";
 
@@ -150,7 +152,7 @@ fn unzip_file(source: &str, destination: &str) -> Result<(), String> {
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-        let outpath = file.sanitized_name();
+        let outpath = file.mangled_name();
         let outpath = format!("{}/{}", destination, outpath.to_str().ok_or("Invalid path")?);
 
         if file.is_dir() {
@@ -175,14 +177,344 @@ fn unzip_file(source: &str, destination: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn get_cached_image(
+    url: String,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    println!("get_cached_image: Processing URL: {}", url);
+    
+    // Create hash from URL for filename
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    let hash = hasher.finish();
+    
+    // Get cache directory
+    let cache_dir = app_handle.path_resolver()
+        .app_cache_dir()
+        .ok_or("Could not get cache directory")?;
+        
+    let cache_dir = cache_dir.join("images");
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    }
+    
+    println!("get_cached_image: Cache directory: {:?}", cache_dir);
+    
+    // Determine file extension from URL
+    let extension = if url.contains(".png") { "png" }
+                   else if url.contains(".jpg") || url.contains(".jpeg") { "jpg" }
+                   else if url.contains(".gif") { "gif" }
+                   else if url.contains(".webp") { "webp" }
+                   else { "jpg" }; // default
+    
+    let cached_file = cache_dir.join(format!("{}.{}", hash, extension));
+    
+    // If file exists, return the path
+    if cached_file.exists() {
+        println!("get_cached_image: Found cached file: {:?}", cached_file);
+        return Ok(cached_file.to_string_lossy().to_string());
+    }
+    
+    println!("get_cached_image: Downloading image from: {}", url);
+    
+    // Download and cache the image
+    let client = reqwest::Client::new();
+    match client.get(&url).send().await {
+        Ok(response) => {
+            println!("get_cached_image: HTTP response status: {}", response.status());
+            match response.bytes().await {
+                Ok(bytes) => {
+                    println!("get_cached_image: Downloaded {} bytes", bytes.len());
+                    match tokio::fs::File::create(&cached_file).await {
+                        Ok(mut file) => {
+                            match file.write_all(&bytes).await {
+                                Ok(_) => {
+                                    match file.flush().await {
+                                        Ok(_) => {
+                                            println!("get_cached_image: Successfully cached to: {:?}", cached_file);
+                                            Ok(cached_file.to_string_lossy().to_string())
+                                        }
+                                        Err(e) => Err(format!("Failed to flush file: {}", e))
+                                    }
+                                }
+                                Err(e) => Err(format!("Failed to write to file: {}", e))
+                            }
+                        }
+                        Err(e) => Err(format!("Failed to create file: {}", e))
+                    }
+                }
+                Err(e) => Err(format!("Failed to read response bytes: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to download image: {}", e))
+    }
+}
+
+#[tauri::command]
+async fn get_cached_image_data(
+    url: String,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<u8>, String> {
+    // Create hash from URL for filename
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    let hash = hasher.finish();
+    
+    // Get cache directory
+    let cache_dir = app_handle.path_resolver()
+        .app_cache_dir()
+        .ok_or("Could not get cache directory")?;
+        
+    let cache_dir = cache_dir.join("images");
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    }
+    
+    // Use webp for optimized cached files
+    let cached_file = cache_dir.join(format!("{}_optimized.webp", hash));
+    let metadata_file = cache_dir.join(format!("{}_metadata.txt", hash));
+    
+    // Check if cached file exists and validate against server
+    if cached_file.exists() {
+        if let Ok(metadata) = std::fs::metadata(&cached_file) {
+            if let Ok(modified) = metadata.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or(std::time::Duration::from_secs(0));
+                
+                // If file is less than 1 hour old, always use cache (no server check)
+                if age.as_secs() < 60 * 60 {
+                    return std::fs::read(&cached_file).map_err(|e| e.to_string());
+                }
+                
+                // For files 1-24 hours old, try server check but fallback gracefully
+                if age.as_secs() < 24 * 60 * 60 {
+                    match check_server_file_changed(&url, &metadata_file).await {
+                        Ok(false) => {
+                            return std::fs::read(&cached_file).map_err(|e| e.to_string());
+                        }
+                        Ok(true) => {
+                            // Server file changed, updating cache
+                        }
+                        Err(_) => {
+                            // Server check failed, but file is recent enough - use cache
+                            return std::fs::read(&cached_file).map_err(|e| e.to_string());
+                        }
+                    }
+                } else {
+                    // File is older than 24 hours, force refresh
+                    println!("♻️  Cache expired (age: {} hours), refreshing...", age.as_secs() / 3600);
+                }
+            }
+        }
+    }
+    
+    println!("⬇️  Downloading new image...");
+    
+    // Download and cache the image
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10)) // 10 second timeout
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        
+    match client.get(&url).send().await {
+        Ok(response) => {
+            if !response.status().is_success() {
+                return Err(format!("HTTP error: {}", response.status()));
+            }
+            
+            // Store server metadata for future comparisons
+            if let Some(etag) = response.headers().get("etag") {
+                if let Ok(etag_str) = etag.to_str() {
+                    let _ = std::fs::write(&metadata_file, format!("etag:{}", etag_str));
+                }
+            } else if let Some(last_modified) = response.headers().get("last-modified") {
+                if let Ok(last_modified_str) = last_modified.to_str() {
+                    let _ = std::fs::write(&metadata_file, format!("last-modified:{}", last_modified_str));
+                }
+            } else {
+                // Store current timestamp as fallback
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap().as_secs();
+                let _ = std::fs::write(&metadata_file, format!("timestamp:{}", timestamp));
+            }
+            
+            match response.bytes().await {
+                Ok(bytes) => {
+                    println!("📦 Downloaded {} KB", bytes.len() / 1024);
+                    
+                    // Process and optimize the image
+                    match optimize_image(&bytes) {
+                        Ok(optimized_bytes) => {
+                            let reduction = if bytes.len() > 0 {
+                                100u64.saturating_sub((optimized_bytes.len() as u64 * 100) / bytes.len() as u64)
+                            } else {
+                                0
+                            };
+                            println!("✨ Optimized to {} KB ({}% smaller)", 
+                                     optimized_bytes.len() / 1024, reduction);
+                            
+                            // Save optimized version to cache
+                            match std::fs::write(&cached_file, &optimized_bytes) {
+                                Ok(_) => {
+                                    println!("💾 Cached successfully!");
+                                    Ok(optimized_bytes)
+                                }
+                                Err(e) => {
+                                    println!("⚠️  Cache write failed: {}", e);
+                                    Ok(optimized_bytes)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("⚠️  Optimization failed, using original: {}", e);
+                            // Fallback to original bytes if optimization fails
+                            Ok(bytes.to_vec())
+                        }
+                    }
+                }
+                Err(e) => Err(format!("Failed to read response bytes: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to download image: {}", e))
+    }
+}
+
+// Helper function to optimize images
+fn optimize_image(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    // Load image from bytes
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    
+    // Resize to maximum 300x200 for faster loading and lower memory usage
+    // This matches the 140px height we set in CSS
+    let resized = img.thumbnail(300, 200);
+    
+    // Convert to WebP for better compression
+    let mut output = Vec::new();
+    resized.write_to(&mut std::io::Cursor::new(&mut output), ImageFormat::WebP)
+        .map_err(|e| format!("Failed to encode image as WebP: {}", e))?;
+    
+    Ok(output)
+}
+
+// Helper function to check if server file has changed
+async fn check_server_file_changed(url: &str, metadata_file: &std::path::Path) -> Result<bool, String> {
+    // Read stored metadata if it exists
+    let stored_metadata = match std::fs::read_to_string(metadata_file) {
+        Ok(content) => content,
+        Err(_) => return Ok(true), // No metadata means we should download
+    };
+    
+    // Create HTTP client with short timeout for HEAD request
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3)) // Shorter timeout
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    // Make HEAD request to check server metadata
+    let response = match client.head(url).send().await {
+        Ok(resp) if resp.status().is_success() => resp,
+        _ => {
+            // HEAD failed silently, assume no change to avoid spam
+            return Ok(false);
+        }
+    };
+    
+    // Check ETag first (most reliable)
+    if stored_metadata.starts_with("etag:") {
+        let stored_etag = &stored_metadata[5..];
+        if let Some(server_etag) = response.headers().get("etag") {
+            if let Ok(server_etag_str) = server_etag.to_str() {
+                return Ok(stored_etag != server_etag_str);
+            }
+        }
+    }
+    
+    // Check Last-Modified header
+    if stored_metadata.starts_with("last-modified:") {
+        let stored_last_modified = &stored_metadata[14..];
+        if let Some(server_last_modified) = response.headers().get("last-modified") {
+            if let Ok(server_last_modified_str) = server_last_modified.to_str() {
+                return Ok(stored_last_modified != server_last_modified_str);
+            }
+        }
+    }
+    
+    // If we have timestamp-based metadata, assume no change
+    Ok(false)
+}
+
+#[tauri::command]
+async fn clear_image_cache(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let cache_dir = app_handle.path_resolver()
+        .app_cache_dir()
+        .ok_or("Could not get cache directory")?
+        .join("images");
+    
+    if cache_dir.exists() {
+        match std::fs::remove_dir_all(&cache_dir) {
+            Ok(_) => {
+                // Recreate the directory
+                std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+                Ok("Cache cleared".to_string())
+            }
+            Err(e) => Err(format!("Failed to clear cache: {}", e))
+        }
+    } else {
+        Ok("Cache directory doesn't exist".to_string())
+    }
+}
+
+#[tauri::command]
+async fn download_with_progress(
+    url: String,
+    file_path: String,
+    window: tauri::Window,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    
+    let total_size = response.content_length().unwrap_or(0);
+    
+    // Create the file
+    let mut file = tokio::fs::File::create(&file_path).await.map_err(|e| e.to_string())?;
+    let mut downloaded = 0u64;
+    let mut stream = response.bytes_stream();
+    
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        
+        downloaded += chunk.len() as u64;
+        let progress = if total_size > 0 {
+            (downloaded as f64 / total_size as f64 * 100.0) as u32
+        } else {
+            0
+        };
+        
+        // Emit progress event
+        let _ = window.emit("download-progress", serde_json::json!({
+            "downloaded": downloaded,
+            "total": total_size,
+            "progress": progress
+        }));
+    }
+    
+    file.flush().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn unzip_handler(source: String, destination: String) -> Result<(), String> {
     unzip_file(&source, &destination)
 }
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![unzip_handler, get_steam_path, is_dotnet6_installed, get_file_version])
-        .plugin(tauri_plugin_upload::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .invoke_handler(tauri::generate_handler![get_cached_image, get_cached_image_data, clear_image_cache, download_with_progress, unzip_handler, get_steam_path, is_dotnet6_installed, get_file_version])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
