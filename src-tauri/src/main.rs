@@ -512,6 +512,13 @@ fn unzip_handler(source: String, destination: String) -> Result<(), String> {
 }
 
 fn main() {
+    // Startup check for _Redloader\dotnet in current directory
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let dotnet_path = cwd.join("_Redloader").join("dotnet");
+    if dotnet_path.exists() {
+        println!("[WARNING] _Redloader\\dotnet detected in current directory. This may cause DLL conflicts or crashes. It is recommended to run RedModManager from its own folder.");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![get_cached_image, get_cached_image_data, clear_image_cache, download_with_progress, unzip_handler, get_steam_path, is_dotnet6_installed, get_file_version])
