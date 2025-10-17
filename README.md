@@ -4,7 +4,8 @@
     <a alt="total downloads">
         <img src="https://img.shields.io/github/downloads/Za-Pa-Al/RedManager/latest/total" /></a>
     <a href="https://github.com/Za-Pa-Al/RedManager/releases" alt="latest version">
-        <img src="https://img.shields.io/github/v/tag/Za-Pa-Al/RedManager?label=version" /></a>
+      <img src="https://img.shields.io/github/v/release/Za-Pa-Al/RedManager?label=version" />
+    </a>
 </p>
 
 ---
