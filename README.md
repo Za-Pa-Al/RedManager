@@ -96,3 +96,65 @@ Enhancements to the RedModManager Tauri/Svelte application.
 - **Optimized Refresh Logic**: Proper mod status synchronization with initModList() calls
 - **Memory Management**: Intelligent image caching with size limits and automatic cleanup
 - **Network Optimization**: Progressive image loading and preloading for better UX
+
+**Project Layout**
+
+```mermaid
+graph LR
+A["RedManager - Tauri/Svelte App"]:::main
+A --> B["Frontend - Svelte (.svelte, .ts)"]:::frontend
+A --> C["Backend - Rust/Tauri (.rs, .toml)"]:::backend
+A --> D["Build/Distribution"]:::build
+
+B --> B1["src/App.svelte"]:::frontendLeaf
+B --> B2["src/pages/MainPage.svelte"]:::frontendLeaf
+B --> B3["src/pages/Mods.svelte"]:::frontendLeaf
+B --> B4["src/lib/ModCard.svelte"]:::frontendLeaf
+B --> B5["src/lib/StatusButton.svelte"]:::frontendLeaf
+B --> B6["src/lib/imageCache.ts"]:::tsLeaf
+
+C --> C1["src-tauri/src/main.rs"]:::backendLeaf
+C --> C2["src-tauri/Cargo.toml"]:::tomlLeaf
+C --> C3["src-tauri/tauri.conf.json"]:::tomlLeaf
+
+D --> D1["src-tauri/target/release/RedModManager.exe"]:::buildLeaf
+D --> D2["src-tauri/target/release/bundle/"]:::buildLeaf
+
+desc1[".svelte: Svelte UI components (Frontend, HTML/CSS/JS)"]:::desc
+desc2[".ts: TypeScript logic (Frontend, JS/TS)"]:::desc
+desc3[".rs: Rust backend code (Backend, Rust)"]:::desc
+desc4[".toml/.json: Project configuration (Backend, TOML/JSON)"]:::desc
+desc5[".exe/.bundle: Distributable files (Binary/Installer)"]:::desc
+
+B1 -.-> desc1
+B2 -.-> desc1
+B3 -.-> desc1
+B4 -.-> desc1
+B5 -.-> desc1
+B6 -.-> desc2
+C1 -.-> desc3
+C2 -.-> desc4
+C3 -.-> desc4
+D1 -.-> desc5
+D2 -.-> desc5
+
+classDef main fill:#fff,stroke:#222,stroke-width:2px,color:#222;
+classDef frontend fill:#e0f7fa,stroke:#222,stroke-width:2px,color:#222;
+classDef frontendLeaf fill:#b2ebf2,stroke:#222,stroke-width:2px,color:#222;
+classDef tsLeaf fill:#80deea,stroke:#222,stroke-width:2px,color:#222;
+classDef backend fill:#e8eaf6,stroke:#222,stroke-width:2px,color:#222;
+classDef backendLeaf fill:#c5cae9,stroke:#222,stroke-width:2px,color:#222;
+classDef tomlLeaf fill:#b3b3e6,stroke:#222,stroke-width:2px,color:#222;
+classDef build fill:#ffe0b2,stroke:#222,stroke-width:2px,color:#222;
+classDef buildLeaf fill:#ffcc80,stroke:#222,stroke-width:2px,color:#222;
+classDef desc fill:#fffde7,stroke:#222,stroke-width:1px,color:#222;
+class A main;
+class B frontend;
+class C backend;
+class D build;
+class B1,B2,B3,B4,B5 frontendLeaf;
+class B6 tsLeaf;
+class C1 backendLeaf;
+class C2,C3 tomlLeaf;
+class D1,D2 buildLeaf;
+class desc1,desc2,desc3,desc4,desc5 desc;
