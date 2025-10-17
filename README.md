@@ -14,10 +14,10 @@ The RedManager is a general tool for installing/uninstalling/updating different 
 
 **:arrow_forward:[Original RedManager from ToniMacaroni](https://github.com/ToniMacaroni/RedManager):arrow_backward:**  
 # Installation
-Download RedModManager.exe and place the .exe in a folder OTHER then directly in "Sons Of The Forest\".
-If placed next to file "Sons Of The Forest\SonsOfTheForest.exe" and subsequently next to folder "Sons Of The Forest\_Redloader", the .dlls in "Sons Of The Forest\_Redloader\" will likely cause a startup crash due to .NET conflicts.
+Download <code>RedModManager.exe</code> from [Releases](https://github.com/Za-Pa-Al/RedManager/releases) and place the <code>.exe</code> in a folder OTHER then directly in <code>Sons Of The Forest\\</code>.<br>
+For example you can safely place <code>RedModManager.exe</code> in <code>Sons Of The Forest\RedModManager\\</code>.<br>
 
-For example you can safely place RedModManager.exe in "Sons Of The Forest\RedModManager\".
+> **⚠️ IMPORTANT:** If placed in the same folder as <code>Sons Of The Forest\\SonsOfTheForest.exe</code> and subsequently in the same folder as <code>Sons Of The Forest\\_Redloader</code>, the <code>.dlls</code> in <code>Sons Of The Forest\\_Redloader</code> will likely cause a startup crash due to .NET conflicts.
 
 # Summary of Changes
 
@@ -31,6 +31,8 @@ Enhancements to the RedModManager Tauri/Svelte application.
 - **Responsive Layout**: Optimal card display across all window sizes
 - **Fast Image Loading**: Cached thumbnails with optimization
 - **Window Memory**: Application remembers user's preferred size/position
+- **Unknown Mods**: Unknown Mods are display in different color
+- **Mod Urls**: Mod Urls are also displayed
 
 ## Technical
 
