@@ -13,7 +13,10 @@ The RedManager is a general tool for installing/uninstalling/updating different 
 
 **:arrow_forward:[Original RedManager from ToniMacaroni](https://github.com/ToniMacaroni/RedManager):arrow_backward:**  
 # Installation
-Download and execute RedModManager.exe. There are likely problems (crashing) if you execute it in the folder of file SonsOfTheForest.exe and folder _Redloader. Place it somewhere else. Might require .NET 6 Installation in that case.
+Download RedModManager.exe and place the .exe in a folder OTHER then directly in "Sons Of The Forest\".
+If placed next to file "Sons Of The Forest\SonsOfTheForest.exe" and subsequently next to folder "Sons Of The Forest\_Redloader", the .dlls in "Sons Of The Forest\_Redloader\" will likely cause a startup crash due to .NET conflicts.
+
+For example you can safely place RedModManager.exe in "Sons Of The Forest\RedModManager\".
 
 # Summary of Changes
 
