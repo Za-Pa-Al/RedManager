@@ -20,8 +20,51 @@ use futures_util::StreamExt;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use image::ImageFormat;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
+
+// Global semaphore to limit concurrent background image checks (max 3 at a time)
+static BACKGROUND_CHECK_SEMAPHORE: once_cell::sync::Lazy<Arc<Semaphore>> = 
+    once_cell::sync::Lazy::new(|| Arc::new(Semaphore::new(3)));
 
 const SOTF_APP_ID: &str = "1326470";
+
+#[derive(serde::Serialize)]
+pub struct ModFileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_symlink: bool,
+    pub target: Option<String>,
+}
+
+#[tauri::command]
+fn scan_mods_directory(dir_path: String) -> Result<Vec<ModFileEntry>, String> {
+    let mut entries = Vec::new();
+    let dir = std::path::Path::new(&dir_path);
+    let read_dir_iter = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
+    
+    for entry in read_dir_iter {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        let is_symlink = metadata.file_type().is_symlink();
+        let target = if is_symlink {
+            std::fs::read_link(&path).ok().map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        };
+        
+        entries.push(ModFileEntry {
+            name,
+            path: path.to_string_lossy().to_string(),
+            is_symlink,
+            target,
+        });
+    }
+    
+    Ok(entries)
+}
 
 #[tauri::command]
 fn is_dotnet6_installed() -> Result<bool, String> {
@@ -250,137 +293,6 @@ async fn get_cached_image(
     }
 }
 
-#[tauri::command]
-async fn get_cached_image_data(
-    url: String,
-    app_handle: tauri::AppHandle,
-) -> Result<Vec<u8>, String> {
-    // Create hash from URL for filename
-    let mut hasher = DefaultHasher::new();
-    url.hash(&mut hasher);
-    let hash = hasher.finish();
-    
-    // Get cache directory
-    let cache_dir = app_handle.path_resolver()
-        .app_cache_dir()
-        .ok_or("Could not get cache directory")?;
-        
-    let cache_dir = cache_dir.join("images");
-    if !cache_dir.exists() {
-        std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
-    }
-    
-    // Use webp for optimized cached files
-    let cached_file = cache_dir.join(format!("{}_optimized.webp", hash));
-    let metadata_file = cache_dir.join(format!("{}_metadata.txt", hash));
-    
-    // Check if cached file exists and validate against server
-    if cached_file.exists() {
-        if let Ok(metadata) = std::fs::metadata(&cached_file) {
-            if let Ok(modified) = metadata.modified() {
-                let age = std::time::SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(std::time::Duration::from_secs(0));
-                
-                // If file is less than 1 hour old, always use cache (no server check)
-                if age.as_secs() < 60 * 60 {
-                    return std::fs::read(&cached_file).map_err(|e| e.to_string());
-                }
-                
-                // For files 1-24 hours old, try server check but fallback gracefully
-                if age.as_secs() < 24 * 60 * 60 {
-                    match check_server_file_changed(&url, &metadata_file).await {
-                        Ok(false) => {
-                            return std::fs::read(&cached_file).map_err(|e| e.to_string());
-                        }
-                        Ok(true) => {
-                            // Server file changed, updating cache
-                        }
-                        Err(_) => {
-                            // Server check failed, but file is recent enough - use cache
-                            return std::fs::read(&cached_file).map_err(|e| e.to_string());
-                        }
-                    }
-                } else {
-                    // File is older than 24 hours, force refresh
-                    println!("♻️  Cache expired (age: {} hours), refreshing...", age.as_secs() / 3600);
-                }
-            }
-        }
-    }
-    
-    println!("⬇️  Downloading new image...");
-    
-    // Download and cache the image
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10)) // 10 second timeout
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-        
-    match client.get(&url).send().await {
-        Ok(response) => {
-            if !response.status().is_success() {
-                return Err(format!("HTTP error: {}", response.status()));
-            }
-            
-            // Store server metadata for future comparisons
-            if let Some(etag) = response.headers().get("etag") {
-                if let Ok(etag_str) = etag.to_str() {
-                    let _ = std::fs::write(&metadata_file, format!("etag:{}", etag_str));
-                }
-            } else if let Some(last_modified) = response.headers().get("last-modified") {
-                if let Ok(last_modified_str) = last_modified.to_str() {
-                    let _ = std::fs::write(&metadata_file, format!("last-modified:{}", last_modified_str));
-                }
-            } else {
-                // Store current timestamp as fallback
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap().as_secs();
-                let _ = std::fs::write(&metadata_file, format!("timestamp:{}", timestamp));
-            }
-            
-            match response.bytes().await {
-                Ok(bytes) => {
-                    println!("📦 Downloaded {} KB", bytes.len() / 1024);
-                    
-                    // Process and optimize the image
-                    match optimize_image(&bytes) {
-                        Ok(optimized_bytes) => {
-                            let reduction = if bytes.len() > 0 {
-                                100u64.saturating_sub((optimized_bytes.len() as u64 * 100) / bytes.len() as u64)
-                            } else {
-                                0
-                            };
-                            println!("✨ Optimized to {} KB ({}% smaller)", 
-                                     optimized_bytes.len() / 1024, reduction);
-                            
-                            // Save optimized version to cache
-                            match std::fs::write(&cached_file, &optimized_bytes) {
-                                Ok(_) => {
-                                    println!("💾 Cached successfully!");
-                                    Ok(optimized_bytes)
-                                }
-                                Err(e) => {
-                                    println!("⚠️  Cache write failed: {}", e);
-                                    Ok(optimized_bytes)
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!("⚠️  Optimization failed, using original: {}", e);
-                            // Fallback to original bytes if optimization fails
-                            Ok(bytes.to_vec())
-                        }
-                    }
-                }
-                Err(e) => Err(format!("Failed to read response bytes: {}", e))
-            }
-        }
-        Err(e) => Err(format!("Failed to download image: {}", e))
-    }
-}
-
 // Helper function to optimize images
 fn optimize_image(bytes: &[u8]) -> Result<Vec<u8>, String> {
     // Load image from bytes
@@ -413,16 +325,11 @@ async fn check_server_file_changed(url: &str, metadata_file: &std::path::Path) -
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     
-    // Make HEAD request to check server metadata
-    let response = match client.head(url).send().await {
-        Ok(resp) if resp.status().is_success() => resp,
-        _ => {
-            // HEAD failed silently, assume no change to avoid spam
-            return Ok(false);
-        }
-    };
+    // Make HEAD request to check metadata
+    let response = client.head(url).send().await
+        .map_err(|e| format!("Failed to check server: {}", e))?;
     
-    // Check ETag first (most reliable)
+    // Check ETag header
     if stored_metadata.starts_with("etag:") {
         let stored_etag = &stored_metadata[5..];
         if let Some(server_etag) = response.headers().get("etag") {
@@ -442,8 +349,187 @@ async fn check_server_file_changed(url: &str, metadata_file: &std::path::Path) -
         }
     }
     
-    // If we have timestamp-based metadata, assume no change
-    Ok(false)
+    // If we can't determine, assume it changed
+    Ok(true)
+}
+
+// Helper function to download and cache an image
+async fn download_and_cache_image(
+    url: &str,
+    cached_file: &std::path::Path,
+    metadata_file: &std::path::Path,
+    show_progress: bool,
+) -> Result<Vec<u8>, String> {
+    // Download and cache the image
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10)) // 10 second timeout
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        
+    match client.get(url).send().await {
+        Ok(response) => {
+            if !response.status().is_success() {
+                return Err(format!("HTTP error: {}", response.status()));
+            }
+            
+            // Store server metadata for future comparisons
+            if let Some(etag) = response.headers().get("etag") {
+                if let Ok(etag_str) = etag.to_str() {
+                    let _ = std::fs::write(metadata_file, format!("etag:{}", etag_str));
+                }
+            } else if let Some(last_modified) = response.headers().get("last-modified") {
+                if let Ok(last_modified_str) = last_modified.to_str() {
+                    let _ = std::fs::write(metadata_file, format!("last-modified:{}", last_modified_str));
+                }
+            } else {
+                // Store current timestamp as fallback
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap().as_secs();
+                let _ = std::fs::write(metadata_file, format!("timestamp:{}", timestamp));
+            }
+            
+            match response.bytes().await {
+                Ok(bytes) => {
+                    if show_progress {
+                        println!("📦 Downloaded {} KB", bytes.len() / 1024);
+                    }
+                    
+                    // Process and optimize the image
+                    match optimize_image(&bytes) {
+                        Ok(optimized_bytes) => {
+                            if show_progress {
+                                let reduction = if bytes.len() > 0 {
+                                    100u64.saturating_sub((optimized_bytes.len() as u64 * 100) / bytes.len() as u64)
+                                } else {
+                                    0
+                                };
+                                println!("✨ Optimized to {} KB ({}% smaller)", 
+                                         optimized_bytes.len() / 1024, reduction);
+                            }
+                            
+                            // Save optimized version to cache
+                            match std::fs::write(cached_file, &optimized_bytes) {
+                                Ok(_) => {
+                                    if show_progress {
+                                        println!("💾 Cached successfully!");
+                                    }
+                                    Ok(optimized_bytes)
+                                }
+                                Err(e) => {
+                                    if show_progress {
+                                        println!("⚠️  Cache write failed: {}", e);
+                                    }
+                                    Ok(optimized_bytes)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if show_progress {
+                                println!("⚠️  Optimization failed, using original: {}", e);
+                            }
+                            // Fallback to original bytes if optimization fails
+                            Ok(bytes.to_vec())
+                        }
+                    }
+                }
+                Err(e) => Err(format!("Failed to read response bytes: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to download image: {}", e))
+    }
+}
+
+#[tauri::command]
+async fn get_cached_image_data(
+    url: String,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<u8>, String> {
+    // Create hash from URL for filename
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    let hash = hasher.finish();
+    
+    // Get cache directory
+    let cache_dir = app_handle.path_resolver()
+        .app_cache_dir()
+        .ok_or("Could not get cache directory")?;
+        
+    let cache_dir = cache_dir.join("images");
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    }
+    
+    // Use webp for optimized cached files
+    let cached_file = cache_dir.join(format!("{}_optimized.webp", hash));
+    let metadata_file = cache_dir.join(format!("{}_metadata.txt", hash));
+    
+    // Check if cached file exists and validate against server
+    if cached_file.exists() {
+        if let Ok(metadata) = std::fs::metadata(&cached_file) {
+            if let Ok(modified) = metadata.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or(std::time::Duration::from_secs(0));
+                
+                // If file is less than 7 days old, use cache immediately (no blocking on server check)
+                if age.as_secs() < 7 * 24 * 60 * 60 {
+                    // Return cached file immediately
+                    let cached_data = std::fs::read(&cached_file).map_err(|e| e.to_string())?;
+                    
+                    // Check when we last verified with server (using metadata file timestamp)
+                    let should_check = if metadata_file.exists() {
+                        if let Ok(meta) = std::fs::metadata(&metadata_file) {
+                            if let Ok(modified) = meta.modified() {
+                                let check_age = std::time::SystemTime::now()
+                                    .duration_since(modified)
+                                    .unwrap_or(std::time::Duration::from_secs(0));
+                                // Only check server if last check was more than 5 minutes ago
+                                check_age.as_secs() >= 5 * 60
+                            } else {
+                                true // Can't read timestamp, check to be safe
+                            }
+                        } else {
+                            true // Can't read metadata, check to be safe
+                        }
+                    } else {
+                        true // No metadata file, first check
+                    };
+                    
+                    // Only spawn background task if we haven't checked recently
+                    if should_check {
+                        // Always spawn background task to check and update cache if needed
+                        // Use semaphore to limit concurrent checks to prevent overwhelming the system
+                        let url_clone = url.clone();
+                        let cached_file_clone = cached_file.clone();
+                        let metadata_file_clone = metadata_file.clone();
+                        let semaphore = BACKGROUND_CHECK_SEMAPHORE.clone();
+                        
+                        tokio::spawn(async move {
+                            // Acquire semaphore permit (waits in queue if max 3 are already running)
+                            let _permit = semaphore.acquire().await.unwrap();
+                            
+                            if let Ok(true) = check_server_file_changed(&url_clone, &metadata_file_clone).await {
+                                // Server file changed, update cache in background (silently)
+                                let _ = download_and_cache_image(&url_clone, &cached_file_clone, &metadata_file_clone, false).await;
+                            }
+                            // Permit is automatically released when _permit is dropped
+                        });
+                    }
+                    
+                    return Ok(cached_data);
+                } else {
+                    // File is older than 7 days, force refresh
+                    println!("♻️  Cache expired (age: {} days), refreshing...", age.as_secs() / (24 * 3600));
+                }
+            }
+        }
+    }
+    
+    println!("⬇️  Downloading new image...");
+    
+    // Use helper function to download and cache (show progress for initial downloads)
+    download_and_cache_image(&url, &cached_file, &metadata_file, true).await
 }
 
 #[tauri::command]
@@ -521,7 +607,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![get_cached_image, get_cached_image_data, clear_image_cache, download_with_progress, unzip_handler, get_steam_path, is_dotnet6_installed, get_file_version])
+        .invoke_handler(tauri::generate_handler![get_cached_image, get_cached_image_data, clear_image_cache, download_with_progress, unzip_handler, get_steam_path, is_dotnet6_installed, get_file_version, scan_mods_directory])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

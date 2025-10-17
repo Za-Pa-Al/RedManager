@@ -101,7 +101,17 @@
         filterTerm = e.target.value;
         page = 1;
         filtered = [];
-        await fetchData();
+        
+        if (installedSelected) {
+            // For installed mods, fetch and filter locally
+            let allInstalled = await ModDatabase.getInstalledMods();
+            filtered = allInstalled.filter(mod => 
+                mod.name.toLowerCase().includes(filterTerm.toLowerCase())
+            );
+        } else {
+            // For online mods, use API search
+            await fetchData();
+        }
     }, 600);
 
     async function toggleOnline() {
@@ -122,7 +132,21 @@
         installedSelected = true;
         isLoading = true;
         filtered = [];
-        filtered = await ModDatabase.getInstalledMods();
+        
+        let allInstalled = await ModDatabase.getInstalledMods();
+        
+        // Apply search filter if there is one
+        if (filterTerm && filterTerm.trim() !== '') {
+            filtered = allInstalled.filter(mod => 
+                mod.name.toLowerCase().includes(filterTerm.toLowerCase())
+            );
+        } else {
+            filtered = allInstalled;
+        }
+        
+        // Sort installed mods by name
+        filtered.sort((a, b) => a.name.localeCompare(b.name));
+        
         isLoading = false;
         // page = 1;
         // filtered = [];

@@ -117,12 +117,21 @@
 </script>
 
 <div class="mod-card-wrapper" 
-     class:installed-enabled={mod.isInstalled && mod.installedMod?.isEnabled}
-     class:installed-disabled={mod.isInstalled && !mod.installedMod?.isEnabled}>
+     class:installed-enabled={mod.isInstalled && mod.installedMod?.isEnabled && !mod.isUnknownSource}
+     class:installed-disabled={mod.isInstalled && !mod.installedMod?.isEnabled && !mod.isUnknownSource}
+     class:unknown-source-enabled={mod.isUnknownSource && mod.isInstalled && mod.installedMod?.isEnabled}
+     class:unknown-source-disabled={mod.isUnknownSource && mod.isInstalled && !mod.installedMod?.isEnabled}>
   <div class="feature-container description {isGrid?'grid-thing':''}">
     <div class="mod-title-section">
       <span class="mod-title">{mod.name}</span>
-      <button type="button" on:click={() => ModDatabase.openModPage(mod)} class="site-link">view on site</button>
+      <div class="link-buttons">
+        {#if !mod.isUnknownSource}
+          <button type="button" on:click={() => ModDatabase.openModPage(mod)} class="site-link" title="https://sotf-mods.com/mods/{mod.user.slug}/{mod.slug}">view on sotf-mods</button>
+        {/if}
+        {#if ModDatabase.hasModUrl(mod)}
+          <button type="button" on:click={() => ModDatabase.openModUrl(mod)} class="site-link" title={mod.installedMod?.manifest?.url || ''}>view mod url</button>
+        {/if}
+      </div>
     </div>
     <span class="description-content header-desc">{mod.shortDescription?mod.shortDescription:""}</span>
     <div class="mod-card-horizontal">
@@ -130,14 +139,23 @@
       <div class="image-container">
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <img
-          class="cover-img clickable-image"
-          src={cachedImageUrl || "https://placehold.co/600x400/252525/FFF?text=Loading..."}
-          alt="Mod cover for {mod.name}"
-          on:load={onImageLoad}
-          on:click={() => ModDatabase.openModPage(mod)}
-          title="Click to view on site"
-        />
+        {#if mod.isUnknownSource}
+          <img
+            class="cover-img"
+            src="https://placehold.co/600x400/000000/FFF?text=Unknown+Source"
+            alt="Unknown source mod"
+            title="Unknown Source"
+          />
+        {:else}
+          <img
+            class="cover-img clickable-image"
+            src={cachedImageUrl || "https://placehold.co/600x400/252525/FFF?text=Loading..."}
+            alt="Mod cover for {mod.name}"
+            on:load={onImageLoad}
+            on:click={() => ModDatabase.openModPage(mod)}
+            title="Click to view on sotf-mods"
+          />
+        {/if}
       </div>
       <div class="vertical">
         <span class="description-content">Author: <b class="update">{mod.user.name}</b></span>
@@ -472,5 +490,33 @@
 
   .installed-disabled .button-section {
     background-color: #2b0d0d !important;
+  }
+
+  /* Unknown source styling - enabled (dark yellow + dark green mix) */
+  .unknown-source-enabled .feature-container {
+    background-color: #1f2410 !important; /* Mix of dark yellow (#2b2410) and dark green (#0d2b1a) */
+  }
+
+  .unknown-source-enabled .button-section {
+    background-color: #1f2410 !important;
+  }
+
+  /* Unknown source styling - disabled (dark yellow + dark red mix) */
+  .unknown-source-disabled .feature-container {
+    background-color: #2b180d !important; /* Mix of dark yellow (#2b2410) and dark red (#2b0d0d) */
+  }
+
+  .unknown-source-disabled .button-section {
+    background-color: #2b180d !important;
+  }
+
+  /* Link buttons container */
+  .link-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    min-height: 16px; /* Reserve space for at least one line of links */
+    align-items: flex-start;
+    justify-content: flex-start; /* Ensure links start from the left */
   }
 </style>
