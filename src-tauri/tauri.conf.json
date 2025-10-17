@@ -7,8 +7,8 @@
     "withGlobalTauri": false
   },
   "package": {
-    "productName": "RedModManager",
-    "version": "1.2.0"
+  "productName": "RedModManager",
+  "version": "1.2.1"
   },
   "tauri": {
     "allowlist": {

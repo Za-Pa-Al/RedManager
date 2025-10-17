@@ -188,7 +188,7 @@
 
             <InfiniteScroll
                 hasMore={newBatch.length !== 0 && !installedSelected}
-                threshold={100}
+                threshold={500}
                 on:loadMore={() => {page++; fetchData()}} />
         </div>
 

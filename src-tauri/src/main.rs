@@ -466,20 +466,21 @@ async fn get_cached_image_data(
     
     // Check if cached file exists and validate against server
     if cached_file.exists() {
-        if let Ok(metadata) = std::fs::metadata(&cached_file) {
-            if let Ok(modified) = metadata.modified() {
-                let age = std::time::SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(std::time::Duration::from_secs(0));
+        // Fast path: just read and return the cached file
+        // Avoid expensive metadata checks on every load
+        match std::fs::read(&cached_file) {
+            Ok(cached_data) => {
+                // Opportunistically spawn background check (non-blocking)
+                // Use try_acquire so we never block - if semaphore is full, skip this check
+                let url_clone = url.clone();
+                let cached_file_clone = cached_file.clone();
+                let metadata_file_clone = metadata_file.clone();
+                let semaphore = BACKGROUND_CHECK_SEMAPHORE.clone();
                 
-                // If file is less than 7 days old, use cache immediately (no blocking on server check)
-                if age.as_secs() < 7 * 24 * 60 * 60 {
-                    // Return cached file immediately
-                    let cached_data = std::fs::read(&cached_file).map_err(|e| e.to_string())?;
-                    
+                tokio::spawn(async move {
                     // Check when we last verified with server (using metadata file timestamp)
-                    let should_check = if metadata_file.exists() {
-                        if let Ok(meta) = std::fs::metadata(&metadata_file) {
+                    let should_check = if metadata_file_clone.exists() {
+                        if let Ok(meta) = std::fs::metadata(&metadata_file_clone) {
                             if let Ok(modified) = meta.modified() {
                                 let check_age = std::time::SystemTime::now()
                                     .duration_since(modified)
@@ -487,41 +488,32 @@ async fn get_cached_image_data(
                                 // Only check server if last check was more than 5 minutes ago
                                 check_age.as_secs() >= 5 * 60
                             } else {
-                                true // Can't read timestamp, check to be safe
+                                false // Can't read timestamp, skip
                             }
                         } else {
-                            true // Can't read metadata, check to be safe
+                            false // Can't read metadata, skip
                         }
                     } else {
                         true // No metadata file, first check
                     };
                     
-                    // Only spawn background task if we haven't checked recently
                     if should_check {
-                        // Always spawn background task to check and update cache if needed
-                        // Use semaphore to limit concurrent checks to prevent overwhelming the system
-                        let url_clone = url.clone();
-                        let cached_file_clone = cached_file.clone();
-                        let metadata_file_clone = metadata_file.clone();
-                        let semaphore = BACKGROUND_CHECK_SEMAPHORE.clone();
+                        // Acquire semaphore permit (waits in queue if max 3 are already running)
+                        // This happens in the background, so it doesn't block returning the cached image
+                        let _permit = semaphore.acquire().await.unwrap();
                         
-                        tokio::spawn(async move {
-                            // Acquire semaphore permit (waits in queue if max 3 are already running)
-                            let _permit = semaphore.acquire().await.unwrap();
-                            
-                            if let Ok(true) = check_server_file_changed(&url_clone, &metadata_file_clone).await {
-                                // Server file changed, update cache in background (silently)
-                                let _ = download_and_cache_image(&url_clone, &cached_file_clone, &metadata_file_clone, false).await;
-                            }
-                            // Permit is automatically released when _permit is dropped
-                        });
+                        if let Ok(true) = check_server_file_changed(&url_clone, &metadata_file_clone).await {
+                            // Server file changed, update cache in background (silently)
+                            let _ = download_and_cache_image(&url_clone, &cached_file_clone, &metadata_file_clone, false).await;
+                        }
+                        // Permit is automatically released when _permit is dropped
                     }
-                    
-                    return Ok(cached_data);
-                } else {
-                    // File is older than 7 days, force refresh
-                    println!("♻️  Cache expired (age: {} days), refreshing...", age.as_secs() / (24 * 3600));
-                }
+                });
+                
+                return Ok(cached_data);
+            }
+            Err(_) => {
+                // Cache file exists but can't read - fall through to re-download
             }
         }
     }
