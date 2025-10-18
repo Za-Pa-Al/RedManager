@@ -1,4 +1,4 @@
-# RedManager
+# RedManager — Sons Of The Forest mod manager (fork)
 
 <p align="center">
     <a alt="total downloads">
